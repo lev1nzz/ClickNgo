@@ -1,6 +1,7 @@
 import os
 import random
 import string
+import logging
 
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -11,6 +12,12 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy import Column, String
+
+# определение логера 
+logging.basicConfig(
+    level=logging.DEBUG, filename='app_log.log', filemode='w',
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 
 # функция для работы с переменными окружения
 load_dotenv()
@@ -45,11 +52,14 @@ all_chars = list(string.ascii_letters + string.digits)
 # функция генерации короткой ссылки
 def generate_short_url(all_chars: list[str]):
     
+    logging.info('short_url_slug:')
     short_url_slug = ''
     
     for _ in range(6):
         slug = random.choice(all_chars)
+        logging.info(f'slug: {slug}')
         short_url_slug += str(slug)
+        logging.info(f'short_url_slug: {short_url_slug}')
     return short_url_slug
 
 # зависимость бд
@@ -81,8 +91,20 @@ def create_short_url(
     payload: CreateUrlSchema, db: Session = Depends(get_db)
     ) -> UrlSchema:
 
-        short_slug = generate_short_url(all_chars)
-        
+        logging.warning('while loop')
+        while True:
+            short_slug = generate_short_url(all_chars)
+            
+            logging.debug('check db is collision')
+            slug_exists = db.query(ValueUrl).filter(
+                ValueUrl.short_url == short_slug
+            ).first()
+            logging.info(f'slug_exists: {slug_exists}')
+            
+            if not slug_exists:
+                logging.info('msg: OK. add short slug next')
+                break
+                
         # добавление урла в таблицу бд
         new_url = ValueUrl(short_url=short_slug, base_url=payload.url)
         
@@ -102,10 +124,13 @@ def redirect_to_long_url(short_slug: str, db: Session = Depends(get_db)):
     url_entry = db.query(ValueUrl).filter( ValueUrl.short_url == short_slug).first()
     
     if not url_entry:
+        logging.error(f'Short URL: {short_slug} not found')
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Short URL not found"
         )
     
+    logging.debug(f'redirect {short_slug} -> {url_entry.base_url}')
+    logging.info(f'msg: 301 ok')
     return RedirectResponse(
         url=url_entry.base_url, status_code=status.HTTP_301_MOVED_PERMANENTLY
     )

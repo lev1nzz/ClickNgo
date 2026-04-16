@@ -40,6 +40,13 @@ class ValueUrl(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
     short_url = Column(String(SHORT_URL_LEN))
     base_url = Column(String(BASE_URL_LEN))
+    
+    
+    def __repr__(self):
+        return f"<ValueUrl(id={self.id}, short_url={self.short_url}, base_url={self.base_url})>"
+    
+    def __str__(self):
+        return f"ValueUrl(short_url={self.short_url}, base_url={self.base_url})"
 
 # создание таблиц при запуске сервера
 Base.metadata.create_all(bind=engine)
@@ -82,6 +89,11 @@ class UrlSchema(BaseModel):
 
 class CreateUrlSchema(BaseModel):
     url: str
+    
+
+class CreateCustomSlugSchema(BaseModel):
+    url: str
+    custom_slug: str
 
 
 
@@ -120,7 +132,7 @@ def create_short_url(
         
 
 @app.get('/{short_slug}')
-def redirect_to_long_url(short_slug: str, db: Session = Depends(get_db)):
+def redirect_to_short_url(short_slug: str, db: Session = Depends(get_db)):
     url_entry = db.query(ValueUrl).filter( ValueUrl.short_url == short_slug).first()
     
     if not url_entry:
@@ -133,4 +145,52 @@ def redirect_to_long_url(short_slug: str, db: Session = Depends(get_db)):
     logging.info(f'msg: 301 ok')
     return RedirectResponse(
         url=url_entry.base_url, status_code=status.HTTP_301_MOVED_PERMANENTLY
+    )
+
+
+@app.post('/custom_url_slug')
+def create_custom_slug(
+    payload: CreateCustomSlugSchema, db: Session = Depends(get_db)
+    ) -> UrlSchema:
+    
+    logging.debug('check db is collision')
+    slug_exists = db.query(ValueUrl).filter(ValueUrl.short_url == payload.custom_slug).first()
+    logging.info(f'slug_exists: {slug_exists}')
+    
+    if slug_exists:
+        logging.error('409 Bad request, slug is busy')
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail='slug is busy'
+        )
+    else:
+        new_custom_url = ValueUrl(
+            short_url=payload.custom_slug, base_url=payload.url
+        )
+        
+    db.add(new_custom_url)
+    db.commit()
+    db.refresh(new_custom_url)
+        
+    return UrlSchema(
+        id=new_custom_url.id,
+        short_url=new_custom_url.short_url,
+        url=new_custom_url.base_url
+    )
+
+
+@app.get('/{custom_url_slug}')
+def redirect_to_custom_url(custom_url_slug: str, db: Session = Depends(get_db)):
+    custom_url_entry = db.query(ValueUrl).filter( ValueUrl.short_url == custom_url_slug).first()
+    
+    if not custom_url_entry:
+        logging.error(f'Short custom URL: {custom_url_entry} not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Short custom URL not found"
+        )
+    
+    logging.debug(f'redirect {custom_url_entry} -> {custom_url_entry.base_url}')
+    logging.info(f'msg: 301 ok')
+    return RedirectResponse(
+        url=custom_url_entry.base_url,
+        status_code=status.HTTP_301_MOVED_PERMANENTLY
     )

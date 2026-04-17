@@ -2,6 +2,7 @@ import os
 import random
 import string
 import logging
+import re
 
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -68,6 +69,7 @@ def generate_short_url(all_chars: list[str]):
         short_url_slug += str(slug)
         logging.info(f'short_url_slug: {short_url_slug}')
     return short_url_slug
+
 
 # зависимость бд
 def get_db():
@@ -148,25 +150,46 @@ def redirect_to_short_url(short_slug: str, db: Session = Depends(get_db)):
     )
 
 
+def validation_custom_slug(text):
+    slug = re.sub(r'\s+', '-', text.strip().lower())
+    pattern = r'^[a-z0-9]+(?:-[a-z0-9]+)*$'
+    is_valid = bool(re.match(pattern, slug))
+    
+    return is_valid, slug
+
+
 @app.post('/custom_url_slug')
 def create_custom_slug(
     payload: CreateCustomSlugSchema, db: Session = Depends(get_db)
     ) -> UrlSchema:
     
-    logging.debug('check db is collision')
-    slug_exists = db.query(ValueUrl).filter(ValueUrl.short_url == payload.custom_slug).first()
-    logging.info(f'slug_exists: {slug_exists}')
+    is_valid, validate_slug = validation_custom_slug(payload.custom_slug)
     
-    if slug_exists:
-        logging.error('409 Bad request, slug is busy')
+    if not is_valid:
+        logging.error(f'invalid slug format: {payload.custom_slug}')
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail='slug is busy'
-        )
-    else:
-        new_custom_url = ValueUrl(
-            short_url=payload.custom_slug, base_url=payload.url
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Invalid slug format. Use only letters, numbers and hyphens (no underscores, no spaces)'
         )
         
+    logging.debug('Checking DB for slug collision')
+    slug_exits = db.query(ValueUrl).filter(
+        ValueUrl.short_url == validate_slug
+        ).first()
+        
+    logging.info(f'Slug exists: {slug_exits}')
+        
+    if slug_exits:
+        logging.error('409 Conflict, slug is busy')
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail='slug is alredy taken'
+            )
+    
+    new_custom_url = ValueUrl(
+        short_url=validate_slug,
+        base_url=payload.url
+    )
+    
     db.add(new_custom_url)
     db.commit()
     db.refresh(new_custom_url)
@@ -176,6 +199,7 @@ def create_custom_slug(
         short_url=new_custom_url.short_url,
         url=new_custom_url.base_url
     )
+
 
 
 @app.get('/{custom_url_slug}')

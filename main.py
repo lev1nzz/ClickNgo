@@ -7,6 +7,7 @@ import re
 from uuid import uuid4
 from dotenv import load_dotenv
 
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -50,7 +51,11 @@ class ValueUrl(Base):
         return f"ValueUrl(short_url={self.short_url}, base_url={self.base_url})"
 
 # создание таблиц при запуске сервера
-Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    yield
+
 # Создание сессии бд
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -80,7 +85,7 @@ def get_db():
         db.close()
 
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 
 class UrlSchema(BaseModel):
